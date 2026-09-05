@@ -9,6 +9,16 @@
   var MAX_CHUNKS = 128;
   var CLOUD_SAVE_DELAY = 1200;
   var REQUEST_TIMEOUT = 5000;
+  var INIT_TIMEOUT = 2500;
+  var INIT_RETRY_TIMEOUT = 8000;
+  var INIT_RETRIES = 3;
+  var INIT_RETRY_DELAY = 1500;
+  var AD_TIMEOUT = 120000;
+  var AD_CHECK_TIMEOUT = 4000;
+  // Отказ быстрее этого срока означает «ролика не было»: посмотреть или закрыть
+  // рекламу за такое время игрок не успел бы.
+  var AD_RETRY_WINDOW = 2500;
+  var AD_FORMATS = ['interstitial', 'reward'];
   var bridge = null;
   var initPromise = null;
   var memoryData = null;
@@ -19,6 +29,7 @@
   var saveSequence = 0;
   var cloudChain = Promise.resolve(false);
   var adInProgress = false;
+  var adReady = { interstitial: false, reward: false };
   var pauseReasons = {};
   var muteReasons = {};
   var mutedMedia = [];
@@ -366,6 +377,46 @@
     return { initialData: getProgress(), environment: environment, sdkAvailable: environment.sdkAvailable };
   }
 
+  function syncCloud() {
+    return loadCloud().then(function (cloud) {
+      storageReady = true;
+      var merged = mergeProgress(getProgress(), cloud);
+      writeLocal(merged);
+      if (hasData(merged) && JSON.stringify(merged) !== JSON.stringify(cloud)) saveProgress(merged, true);
+    }).catch(function (error) {
+      // Do not overwrite an unknown remote snapshot after a failed read.
+      warn('облако недоступно; используется локальный прогресс.', error);
+    });
+  }
+
+  function activatePlatform() {
+    environment.sdkAvailable = true;
+    if (isNativeMobile()) {
+      send('VKWebAppSetViewSettings', { status_bar_style: 'light', action_bar_color: '#101522', navigation_bar_color: '#101522' })
+        .catch(function (error) { warn('настройки панелей клиента недоступны.', error); });
+    }
+    preloadAds();
+    return syncCloud();
+  }
+
+  // Холодный старт клиента бывает медленнее первого ожидания. Без повтора
+  // единственный неуспевший VKWebAppInit навсегда отключал бы рекламу и облако.
+  function retryHandshake(attempt) {
+    if (environment.sdkAvailable || attempt > INIT_RETRIES || !isEmbedded()) return;
+    setTimeout(function () {
+      if (environment.sdkAvailable) return;
+      send('VKWebAppInit', {}, INIT_RETRY_TIMEOUT).then(function (data) {
+        requireSuccess(data, 'VKWebAppInit');
+        return activatePlatform();
+      }).then(function () {
+        emit('vkplatformchange', { sdkAvailable: true });
+      }, function (error) {
+        warn('повторный VKWebAppInit не удался.', error);
+        retryHandshake(attempt + 1);
+      });
+    }, INIT_RETRY_DELAY * attempt);
+  }
+
   function init() {
     if (initPromise) return initPromise;
     getProgress();
@@ -377,7 +428,7 @@
       return initPromise;
     }
     subscribe();
-    var startup = send('VKWebAppInit', {}, 2500);
+    var startup = send('VKWebAppInit', {}, INIT_TIMEOUT);
     if (!isEmbedded()) {
       startup.catch(function () {});
       initPromise = Promise.resolve(initResult());
@@ -385,27 +436,76 @@
     }
     initPromise = startup.then(function (data) {
       requireSuccess(data, 'VKWebAppInit');
-      environment.sdkAvailable = true;
-      if (isNativeMobile()) {
-        send('VKWebAppSetViewSettings', { status_bar_style: 'light', action_bar_color: '#101522', navigation_bar_color: '#101522' })
-          .catch(function (error) { warn('настройки панелей клиента недоступны.', error); });
-      }
-      return loadCloud().then(function (cloud) {
-        storageReady = true;
-        var merged = mergeProgress(getProgress(), cloud);
-        writeLocal(merged);
-        if (hasData(merged) && JSON.stringify(merged) !== JSON.stringify(cloud)) saveProgress(merged, true);
-      }).catch(function (error) {
-        // Do not overwrite an unknown remote snapshot after a failed read.
-        warn('облако недоступно; используется локальный прогресс.', error);
-      });
+      return activatePlatform();
     }).catch(function (error) {
       warn('Bridge недоступен; игра работает локально.', error);
+      retryHandshake(1);
     }).then(initResult);
     return initPromise;
   }
 
-  function canShowAds() { return !!(environment.sdkAvailable && bridge && !adInProgress); }
+  function canShowAds() {
+    return !!(environment.sdkAvailable && bridge && !adInProgress &&
+      supportsMethod('VKWebAppShowNativeAds'));
+  }
+
+  // Клиент может не заявлять о поддержке метода вовсе; отсутствие ответа
+  // трактуем как «поддерживает», отказ — как «нет».
+  function supportsMethod(name) {
+    if (!bridge || typeof bridge.supports !== 'function') return !!bridge;
+    try { return bridge.supports(name) !== false; }
+    catch (error) { return true; }
+  }
+
+  function describeError(error) {
+    if (!error) return '';
+    var data = error.error_data || (error.error && error.error.error_data) || {};
+    var reason = data.error_reason;
+    if (reason && typeof reason === 'object') reason = reason.error_msg || reason.error_message || '';
+    var text = data.error_msg || data.error_description || reason || error.message ||
+      (data.error_code === undefined ? '' : 'код ' + data.error_code);
+    return String(text || error.error_type || '').slice(0, 160);
+  }
+
+  // Проверка доступности заодно просит клиент заранее загрузить ролик — без неё
+  // первый VKWebAppShowNativeAds часто отвечает «рекламы нет в наличии».
+  function preloadAd(format) {
+    if (!environment.sdkAvailable || !bridge || !supportsMethod('VKWebAppCheckNativeAds')) {
+      return Promise.resolve(false);
+    }
+    return send('VKWebAppCheckNativeAds', { ad_format: format, use_waterfall: true }, AD_CHECK_TIMEOUT)
+      .then(function (data) {
+        adReady[format] = !!(data && data.result === true);
+        return adReady[format];
+      }, function (error) {
+        adReady[format] = false;
+        warn('не удалось проверить рекламу «' + format + '».', error);
+        return false;
+      });
+  }
+
+  function preloadAds() {
+    AD_FORMATS.forEach(function (format) { preloadAd(format); });
+  }
+
+  function requestAd(format, allowRetry) {
+    var instant = allowRetry;
+    var retryWindow = setTimeout(function () { instant = false; }, AD_RETRY_WINDOW);
+    return send('VKWebAppShowNativeAds', { ad_format: format, use_waterfall: true }, AD_TIMEOUT)
+      .then(function (data) {
+        clearTimeout(retryWindow);
+        adReady[format] = false;
+        return !!(data && data.result === true);
+      }, function (error) {
+        clearTimeout(retryWindow);
+        adReady[format] = false;
+        // Повторяем только мгновенный отказ: иначе закрытый игроком ролик
+        // запустился бы во второй раз.
+        if (!instant || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
+        warn('ролик «' + format + '» не был готов, просим клиент загрузить его.', error);
+        return preloadAd(format).then(function () { return requestAd(format, false); });
+      });
+  }
 
   function showAd(format, callbacks) {
     callbacks = callbacks || {};
@@ -415,17 +515,18 @@
     setMuteReason('advertising', true);
     callback(callbacks, 'onOpen');
     var shown = false;
-    send('VKWebAppShowNativeAds', { ad_format: format }, 120000).then(function (data) {
-      shown = !!(data && data.result === true);
+    requestAd(format, true).then(function (result) {
+      shown = result;
       if (shown && format === 'reward') callback(callbacks, 'onRewarded');
-    }).catch(function (error) {
+    }, function (error) {
       warn('реклама не показана.', error);
       callback(callbacks, 'onError', error);
-    }).finally(function () {
+    }).then(function () {
       adInProgress = false;
       setMuteReason('advertising', false);
       setPauseReason('advertising', false);
       callback(callbacks, 'onClose', shown);
+      preloadAd(format);
     });
     return true;
   }
@@ -492,6 +593,9 @@
     showFullscreenAd: function (callbacks) { return showAd('interstitial', callbacks); },
     showRewardedAd: function (callbacks) { return showAd('reward', callbacks); },
     canShowAds: canShowAds,
+    preloadAds: preloadAds,
+    adStatus: function () { return clone(adReady); },
+    describeError: describeError,
     requestFullscreen: function () { return setFullscreen(true); },
     exitFullscreen: function () { return setFullscreen(false); },
     toggleFullscreen: function () { return setFullscreen(!fullscreenStatus()); },

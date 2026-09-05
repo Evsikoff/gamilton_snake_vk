@@ -419,6 +419,85 @@ for (const ad of [{ method: 'showRewardedAd', format: 'reward' }, { method: 'sho
   }
 }
 
+test('startup preloads both ad formats so the first show is not answered with an empty slot', async () => {
+  const h = browser();
+  await h.api.init();
+  const checks = h.calls.filter((call) => call.method === 'VKWebAppCheckNativeAds');
+  assert.deepEqual(checks.map((call) => call.params.ad_format).sort(), ['interstitial', 'reward']);
+  assert(checks.every((call) => call.params.use_waterfall === true), 'waterfall widens ad fill');
+  assert.deepEqual(plain(h.api.adStatus()), { interstitial: true, reward: true });
+});
+
+test('an ad refused immediately is preloaded and retried exactly once', async () => {
+  let attempts = 0;
+  const h = browser({ send(method, params, host) {
+    if (method !== 'VKWebAppShowNativeAds') return host.defaultSend(method, params);
+    attempts++;
+    return attempts === 1 ? Promise.reject(new Error('Ad is not ready')) : Promise.resolve({ result: true });
+  } });
+  await h.api.init();
+  let reward = 0, closes = 0, shown;
+  h.api.showRewardedAd({ onRewarded() { reward++; }, onClose(value) { closes++; shown = value; } });
+  await drain();
+  assert.equal(attempts, 2, 'a refusal with no ad loaded deserves one more try');
+  assert.equal(reward, 1);
+  assert.equal(closes, 1);
+  assert.equal(shown, true);
+  const retryCheck = h.calls.findIndex((call) => call.method === 'VKWebAppCheckNativeAds' &&
+    h.calls.indexOf(call) > h.calls.findIndex((first) => first.method === 'VKWebAppShowNativeAds'));
+  assert(retryCheck >= 0, 'the retry must ask the client to load a clip first');
+});
+
+test('an ad the player closes after watching is never restarted', async () => {
+  const ad = deferred();
+  let attempts = 0;
+  const h = browser({ send(method, params, host) {
+    if (method !== 'VKWebAppShowNativeAds') return host.defaultSend(method, params);
+    attempts++;
+    return ad.promise;
+  } });
+  await h.api.init();
+  let closes = 0, shown;
+  h.api.showRewardedAd({ onClose(value) { closes++; shown = value; } });
+  await h.advance(30000); // Ролик шёл: отказ приходит уже вне окна повтора.
+  ad.reject(new Error('User closed the ad'));
+  await drain();
+  assert.equal(attempts, 1);
+  assert.equal(closes, 1);
+  assert.equal(shown, false);
+});
+
+test('a client too slow for the first handshake still gets ads and cloud saves', async () => {
+  let handshakes = 0;
+  const h = browser({ local: { [LOCAL_KEY]: '{"score":64}' }, send(method, params, host) {
+    if (method !== 'VKWebAppInit') return host.defaultSend(method, params);
+    return ++handshakes === 1 ? new Promise(() => {}) : Promise.resolve({ result: true });
+  } });
+  const announced = [];
+  h.context.addEventListener('vkplatformchange', (event) => announced.push(event.detail));
+  const pending = h.api.init();
+  await h.advance(3000); // Первое ожидание истекло, повтор ещё не ушёл.
+  const state = await pending;
+  assert.equal(state.sdkAvailable, false, 'startup must not wait for a stalled client');
+  assert.equal(state.initialData.score, 64);
+  assert.equal(h.api.canShowAds(), false);
+  await h.advance(10000);
+  assert.equal(h.api.canShowAds(), true, 'a late VKWebAppInit must re-enable advertising');
+  assert.deepEqual(plain(announced), [{ sdkAvailable: true }]);
+  assert.equal(h.count('VKWebAppStorageGet'), 1);
+  assert.equal(h.api.showRewardedAd({}), true);
+});
+
+test('a client that never answers stops retrying the handshake', async () => {
+  const h = browser({ send(method, params, host) {
+    return method === 'VKWebAppInit' ? Promise.reject(new Error('Disconnected')) : host.defaultSend(method, params);
+  } });
+  await h.api.init();
+  await h.advance(120000);
+  assert.equal(h.count('VKWebAppInit'), 4, 'one handshake plus a bounded number of retries');
+  assert.equal(h.api.canShowAds(), false);
+});
+
 test('ad lock rejects overlap and visibility keeps gameplay/audio paused after ad closes', async () => {
   const ad = deferred();
   const h = browser({ send(method, params, host) {

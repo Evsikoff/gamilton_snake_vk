@@ -22,96 +22,26 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
+/* Страницу прокручивает сам браузер: своего контейнера со скроллом нет. */
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  height: 100%;
-  overflow: hidden !important;
-  overscroll-behavior: none;
-  scrollbar-width: none;
   background: var(--ui-bg);
   color: var(--ui-text);
   font-family: var(--font-ui);
   font-size: 15px;
 }
 
+body { min-height: 100vh; }
+
 .app {
   max-width: 1180px;
-  height: 100%;
-  height: min(100%, var(--vk-viewport-height, 100%));
   margin: 0 auto;
   padding: calc(18px + var(--safe-top)) calc(16px + var(--safe-right))
     calc(40px + var(--safe-bottom)) calc(16px + var(--safe-left));
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: none;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
   -webkit-touch-callout: none;
   user-select: none;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-html::-webkit-scrollbar,
-body::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-.app::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.custom-scrollbar[hidden] {
-  display: none;
-}
-
-.custom-scrollbar {
-  position: fixed;
-  z-index: 1000;
-  top: calc(8px + var(--safe-top));
-  right: calc(5px + var(--safe-right));
-  bottom: calc(8px + var(--safe-bottom));
-  width: 10px;
-  border: 1px solid #34431f;
-  border-radius: 999px;
-  background: rgba(20, 23, 15, .86);
-  box-shadow: inset 0 0 0 1px rgba(154, 214, 26, .05),
-    0 0 8px rgba(0, 0, 0, .3);
-  touch-action: none;
-  cursor: pointer;
-  opacity: .78;
-  transition: opacity .15s, border-color .15s;
-}
-
-.custom-scrollbar:hover,
-.custom-scrollbar.dragging {
-  border-color: #668a22;
-  opacity: 1;
-}
-
-.custom-scrollbar-thumb {
-  position: absolute;
-  top: 0;
-  left: 2px;
-  width: 4px;
-  min-height: 44px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #b2ed2d, #6c941b);
-  box-shadow: 0 0 6px rgba(154, 214, 26, .38);
-  cursor: grab;
-  will-change: transform, height;
-}
-
-.custom-scrollbar.dragging .custom-scrollbar-thumb {
-  background: var(--accent);
-  box-shadow: 0 0 9px rgba(154, 214, 26, .65);
-  cursor: grabbing;
 }
 
 /* ---------- шапка ---------- */
