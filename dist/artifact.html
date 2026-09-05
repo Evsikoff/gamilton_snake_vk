@@ -869,6 +869,10 @@ var Solver = (function () {
   // рекламу за такое время игрок не успел бы.
   var AD_RETRY_WINDOW = 2500;
   var AD_FORMATS = ['interstitial', 'reward'];
+  // Ответ рекламной сети «нет подходящего ролика»: показывать нечего сейчас,
+  // а не сломано в игре.
+  var AD_NO_FILL = 20;
+  var AD_ERRORS = { 20: 'сейчас нет подходящей рекламы' };
   var bridge = null;
   var initPromise = null;
   var memoryData = null;
@@ -880,6 +884,7 @@ var Solver = (function () {
   var cloudChain = Promise.resolve(false);
   var adInProgress = false;
   var adReady = { interstitial: false, reward: false };
+  var methodSupport = {};
   var pauseReasons = {};
   var muteReasons = {};
   var mutedMedia = [];
@@ -901,7 +906,17 @@ var Solver = (function () {
   function isObject(data) { return !!data && typeof data === 'object' && !Array.isArray(data); }
   function clone(data) { return JSON.parse(JSON.stringify(data)); }
   function hasData(data) { return isObject(data) && Object.keys(data).length > 0; }
-  function warn(message, error) { console.warn('VK: ' + message, error || ''); }
+  // Голый объект ошибки печатается как «Object» и ничего не говорит о причине,
+  // поэтому разбираем его текстом прямо в сообщении.
+  function warn(message, error) {
+    var reason = describeError(error);
+    var dump = '';
+    try { dump = error ? JSON.stringify(error.error_data || error) || '' : ''; }
+    catch (serialization) { dump = ''; }
+    if (dump === '{}' || dump === reason) dump = '';
+    console.warn('VK: ' + message + (reason ? ' — ' + reason : '') +
+      (dump ? ' ' + dump : ''), error || '');
+  }
   function callback(target, name, value) {
     try { if (typeof target[name] === 'function') target[name](value); }
     catch (error) { console.error('VK: ошибка обработчика ' + name, error); }
@@ -1245,6 +1260,7 @@ var Solver = (function () {
       send('VKWebAppSetViewSettings', { status_bar_style: 'light', action_bar_color: '#101522', navigation_bar_color: '#101522' })
         .catch(function (error) { warn('настройки панелей клиента недоступны.', error); });
     }
+    ['VKWebAppShowNativeAds', 'VKWebAppCheckNativeAds'].forEach(probeSupport);
     preloadAds();
     return syncCloud();
   }
@@ -1299,17 +1315,41 @@ var Solver = (function () {
       supportsMethod('VKWebAppShowNativeAds'));
   }
 
-  // Клиент может не заявлять о поддержке метода вовсе; отсутствие ответа
-  // трактуем как «поддерживает», отказ — как «нет».
+  // bridge.supports объявлен устаревшим, а bridge.supportsAsync отвечает
+  // промисом — значит, спрашиваем один раз и держим ответ в кэше: canShowAds
+  // вызывается на каждой перерисовке кнопок и должен оставаться синхронным.
   function supportsMethod(name) {
-    if (!bridge || typeof bridge.supports !== 'function') return !!bridge;
-    try { return bridge.supports(name) !== false; }
-    catch (error) { return true; }
+    return methodSupport[name] !== false;
+  }
+
+  function probeSupport(name) {
+    var pending;
+    try {
+      if (!bridge) pending = Promise.resolve(true);
+      else if (typeof bridge.supportsAsync === 'function') pending = bridge.supportsAsync(name);
+      else if (typeof bridge.supports === 'function') pending = bridge.supports(name);
+      else pending = true;
+    } catch (error) { pending = Promise.reject(error); }
+    return Promise.resolve(pending).then(function (value) {
+      return value !== false;
+    }, function () {
+      // Неизвестно — считаем, что метод есть: об отказе скажет сам вызов.
+      return true;
+    }).then(function (supported) {
+      var changed = supportsMethod(name) !== supported;
+      methodSupport[name] = supported;
+      if (!supported) warn('клиент не поддерживает ' + name + '.');
+      if (changed) emit('vkplatformchange', { sdkAvailable: environment.sdkAvailable });
+      return supported;
+    });
   }
 
   function describeError(error) {
     if (!error) return '';
     var data = error.error_data || (error.error && error.error.error_data) || {};
+    if (Object.prototype.hasOwnProperty.call(AD_ERRORS, data.error_code)) {
+      return AD_ERRORS[data.error_code];
+    }
     var reason = data.error_reason;
     if (reason && typeof reason === 'object') reason = reason.error_msg || reason.error_message || '';
     var text = data.error_msg || data.error_description || reason || error.message ||
@@ -1334,8 +1374,41 @@ var Solver = (function () {
       });
   }
 
+  function isNoFill(error) {
+    var data = error && error.error_data;
+    if (!data) return false;
+    return Number(data.error_code) === AD_NO_FILL || /no ads/i.test(String(data.error_reason || ''));
+  }
+
   function preloadAds() {
     AD_FORMATS.forEach(function (format) { preloadAd(format); });
+  }
+
+  // Сводка для консоли живого клиента: почему именно реклама не идёт видно
+  // только там, а сообщение об ошибке от VK иначе теряется.
+  function diagnoseAds() {
+    var report = {
+      sdkAvailable: environment.sdkAvailable,
+      client: environment.client,
+      platform: environment.platform,
+      appId: environment.appId,
+      canShowAds: canShowAds(),
+      support: clone(methodSupport),
+      preloaded: clone(adReady),
+      checks: {}
+    };
+    if (!environment.sdkAvailable || !bridge) return Promise.resolve(report);
+    var chain = Promise.resolve();
+    AD_FORMATS.forEach(function (format) {
+      chain = chain.then(function () {
+        return send('VKWebAppCheckNativeAds', { ad_format: format, use_waterfall: true }, AD_CHECK_TIMEOUT)
+          .then(function (data) { report.checks[format] = { answered: true, response: data }; },
+            function (error) {
+              report.checks[format] = { answered: false, reason: describeError(error), error: error };
+            });
+      });
+    });
+    return chain.then(function () { return report; });
   }
 
   function requestAd(format, allowRetry) {
@@ -1350,8 +1423,9 @@ var Solver = (function () {
         clearTimeout(retryWindow);
         adReady[format] = false;
         // Повторяем только мгновенный отказ: иначе закрытый игроком ролик
-        // запустился бы во второй раз.
-        if (!instant || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
+        // запустился бы во второй раз. Отсутствие подходящего ролика повторять
+        // бессмысленно — за доли секунды сеть его не найдёт.
+        if (!instant || isNoFill(error) || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
         warn('ролик «' + format + '» не был готов, просим клиент загрузить его.', error);
         return preloadAd(format).then(function () { return requestAd(format, false); });
       });
@@ -1445,6 +1519,7 @@ var Solver = (function () {
     canShowAds: canShowAds,
     preloadAds: preloadAds,
     adStatus: function () { return clone(adReady); },
+    diagnoseAds: diagnoseAds,
     describeError: describeError,
     requestFullscreen: function () { return setFullscreen(true); },
     exitFullscreen: function () { return setFullscreen(false); },

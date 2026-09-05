@@ -428,6 +428,32 @@ test('startup preloads both ad formats so the first show is not answered with an
   assert.deepEqual(plain(h.api.adStatus()), { interstitial: true, reward: true });
 });
 
+test('method support is probed with supportsAsync, never the deprecated supports', async () => {
+  const h = browser();
+  let deprecated = 0;
+  const asked = [];
+  h.context.vkBridge.supports = () => { deprecated++; return true; };
+  h.context.vkBridge.supportsAsync = (name) => { asked.push(name); return Promise.resolve(true); };
+  await h.api.init();
+  await drain();
+  for (let i = 0; i < 12; i++) h.api.canShowAds();
+  assert.equal(deprecated, 0, 'bridge.supports is deprecated and must stay unused');
+  assert.deepEqual(asked.sort(), ['VKWebAppCheckNativeAds', 'VKWebAppShowNativeAds']);
+  assert.equal(h.api.canShowAds(), true);
+});
+
+test('a client without native ads turns the buttons off instead of failing on click', async () => {
+  const h = browser();
+  const announced = [];
+  h.context.addEventListener('vkplatformchange', () => announced.push(1));
+  h.context.vkBridge.supportsAsync = (name) => Promise.resolve(name !== 'VKWebAppShowNativeAds');
+  await h.api.init();
+  await drain();
+  assert.equal(h.api.canShowAds(), false);
+  assert.equal(h.api.showRewardedAd({}), false);
+  assert.equal(announced.length, 1, 'the game needs one nudge to redraw the level strip');
+});
+
 test('an ad refused immediately is preloaded and retried exactly once', async () => {
   let attempts = 0;
   const h = browser({ send(method, params, host) {
@@ -446,6 +472,22 @@ test('an ad refused immediately is preloaded and retried exactly once', async ()
   const retryCheck = h.calls.findIndex((call) => call.method === 'VKWebAppCheckNativeAds' &&
     h.calls.indexOf(call) > h.calls.findIndex((first) => first.method === 'VKWebAppShowNativeAds'));
   assert(retryCheck >= 0, 'the retry must ask the client to load a clip first');
+});
+
+test('an empty ad network is reported in Russian and not asked twice', async () => {
+  let attempts = 0;
+  const h = browser({ send(method, params, host) {
+    if (method !== 'VKWebAppShowNativeAds') return host.defaultSend(method, params);
+    attempts++;
+    return Promise.reject({ error_type: 'client_error', error_data: { error_code: 20, error_reason: 'No ads' } });
+  } });
+  await h.api.init();
+  let failure = '', closes = 0;
+  h.api.showRewardedAd({ onError(error) { failure = h.api.describeError(error); }, onClose() { closes++; } });
+  await drain();
+  assert.equal(attempts, 1, 'the network has nothing to serve; a retry cannot change that');
+  assert.equal(closes, 1);
+  assert.equal(failure, 'сейчас нет подходящей рекламы');
 });
 
 test('an ad the player closes after watching is never restarted', async () => {
