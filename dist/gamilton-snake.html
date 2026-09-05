@@ -2,10 +2,9 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Змейка Гамильтона</title>
-<!-- При загрузке архива Яндекс Игры проксируют SDK по этому адресу. -->
-<script src="/sdk.js"></script>
+<script defer src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Play:wght@400;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
@@ -21,6 +20,10 @@
   --ui-text: #cfe0a8;
   --ui-dim: #7f8f66;
   --accent: #9ad61a;
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--vk-inset-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--vk-inset-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--vk-inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--vk-inset-left, 0px));
 
   --font-ui: "Segoe UI", Roboto, system-ui, sans-serif;
   --font-display: "Play", "Segoe UI", Roboto, sans-serif;
@@ -28,95 +31,28 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
+/* Страницу прокручивает сам браузер: своего контейнера со скроллом нет. */
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  height: 100%;
-  overflow: hidden !important;
-  overscroll-behavior: none;
-  scrollbar-width: none;
   background: var(--ui-bg);
   color: var(--ui-text);
   font-family: var(--font-ui);
   font-size: 15px;
 }
 
+body { min-height: 100vh; }
+
 .app {
   max-width: 1180px;
-  height: 100%;
   margin: 0 auto;
-  padding: 18px 16px 40px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: none;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
+  padding: calc(18px + var(--safe-top)) calc(16px + var(--safe-right))
+    calc(40px + var(--safe-bottom)) calc(16px + var(--safe-left));
   -webkit-touch-callout: none;
   user-select: none;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-html::-webkit-scrollbar,
-body::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-.app::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.custom-scrollbar[hidden] {
-  display: none;
-}
-
-.custom-scrollbar {
-  position: fixed;
-  z-index: 1000;
-  top: 8px;
-  right: 5px;
-  bottom: 8px;
-  width: 10px;
-  border: 1px solid #34431f;
-  border-radius: 999px;
-  background: rgba(20, 23, 15, .86);
-  box-shadow: inset 0 0 0 1px rgba(154, 214, 26, .05),
-    0 0 8px rgba(0, 0, 0, .3);
-  touch-action: none;
-  cursor: pointer;
-  opacity: .78;
-  transition: opacity .15s, border-color .15s;
-}
-
-.custom-scrollbar:hover,
-.custom-scrollbar.dragging {
-  border-color: #668a22;
-  opacity: 1;
-}
-
-.custom-scrollbar-thumb {
-  position: absolute;
-  top: 0;
-  left: 2px;
-  width: 4px;
-  min-height: 44px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, #b2ed2d, #6c941b);
-  box-shadow: 0 0 6px rgba(154, 214, 26, .38);
-  cursor: grab;
-  will-change: transform, height;
-}
-
-.custom-scrollbar.dragging .custom-scrollbar-thumb {
-  background: var(--accent);
-  box-shadow: 0 0 9px rgba(154, 214, 26, .65);
-  cursor: grabbing;
 }
 
 /* ---------- шапка ---------- */
@@ -421,11 +357,12 @@ input[type="range"]:focus-visible {
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" inert>
 
   <header class="top">
     <h1>Змейка&nbsp;Гамильтона</h1>
     <div class="levels" id="levelStrip"></div>
+    <button id="btnFullscreen" class="ghost" aria-pressed="false" hidden>На весь экран</button>
   </header>
 
   <div class="stage">
@@ -486,7 +423,7 @@ input[type="range"]:focus-visible {
       </div>
     </div>
 
-    <div class="status" id="status">Нарисуй замкнутый цикл — «рельсы», по которым побежит змейка.</div>
+    <div class="status" id="status" role="status">Загружаем игру и сохранённый прогресс…</div>
   </div>
 
   <details class="rules">
@@ -522,11 +459,9 @@ input[type="range"]:focus-visible {
   </details>
 
 </div>
-
-<div class="custom-scrollbar" id="customScrollbar" aria-hidden="true" hidden>
-  <div class="custom-scrollbar-thumb" id="customScrollbarThumb"></div>
-</div>
 <script>
+(function () {
+function startGame() {
 // Уровни «Змейки Гамильтона».
 // Лабиринты сняты попиксельно со скриншотов Snake II (mazes/*.jpg).
 // Поле 40 x 17 клеток; '#' — стена, '.' — свободная клетка.
@@ -920,89 +855,121 @@ var Solver = (function () {
   return { hamiltonCycle: hamiltonCycle, buildGraph: buildGraph };
 })();
 
-// Интеграция с платформой вынесена из игровой логики, чтобы игра продолжала
-// работать при обычном локальном запуске, когда /sdk.js недоступен.
+// VK Bridge is isolated from the game so the same build also works offline.
 (function (global) {
   'use strict';
 
   var STORE_KEY = 'gamilton-snake-v1';
-  var CLOUD_KEY = 'gamiltonSnakeProgress';
+  var CLOUD_KEY = 'gameState';
+  var CLOUD_FORMAT = 'gamilton-snake-chunks-v1';
+  var MAX_VALUE_BYTES = 4096;
+  var MAX_CHUNKS = 128;
   var CLOUD_SAVE_DELAY = 1200;
-
-  var ysdk = null;
-  var player = null;
+  var REQUEST_TIMEOUT = 5000;
+  var INIT_TIMEOUT = 2500;
+  var INIT_RETRY_TIMEOUT = 8000;
+  var INIT_RETRIES = 3;
+  var INIT_RETRY_DELAY = 1500;
+  var AD_TIMEOUT = 120000;
+  var AD_CHECK_TIMEOUT = 4000;
+  // Отказ быстрее этого срока означает «ролика не было»: посмотреть или закрыть
+  // рекламу за такое время игрок не успел бы.
+  var AD_RETRY_WINDOW = 2500;
+  var AD_FORMATS = ['interstitial', 'reward'];
+  var bridge = null;
   var initPromise = null;
-  var readySent = false;
-  var gameplayRequested = false;
-  var gameplayMarked = false;
-  var platformPaused = false;
-  var gameplayWasMarkedAtPlatformPause = false;
-  var adInProgress = false;
+  var memoryData = null;
+  var storageReady = false;
+  var cloudSlot = 'b';
   var cloudTimer = 0;
-  var pendingCloudData = null;
-  var cloudChain = Promise.resolve();
+  var pendingSave = null;
+  var saveSequence = 0;
+  var cloudChain = Promise.resolve(false);
+  var adInProgress = false;
+  var adReady = { interstitial: false, reward: false };
   var pauseReasons = {};
   var muteReasons = {};
   var mutedMedia = [];
-  var hooks = {
-    pause: function () {},
-    resume: function () {},
-    mute: function () {},
-    unmute: function () {}
-  };
-
+  var config = {};
+  var nativeFullscreen = false;
+  var hooks = {};
+  var params = new URLSearchParams(global.location.search || '');
   var environment = {
-    language: 'ru',
+    language: String(params.get('vk_language') || 'ru').slice(0, 2).toLowerCase(),
     browserLanguage: (navigator.language || 'ru').slice(0, 2).toLowerCase(),
     deviceType: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
-    appId: '',
-    payload: '',
+    appId: params.get('vk_app_id') || '',
+    client: params.get('vk_client') || 'vk',
+    isOdnoklassniki: params.get('vk_client') === 'ok',
+    platform: params.get('vk_platform') || '',
     sdkAvailable: false
   };
 
-  function cloneData(data) {
-    try { return JSON.parse(JSON.stringify(data)); }
-    catch (e) { return {}; }
+  function isObject(data) { return !!data && typeof data === 'object' && !Array.isArray(data); }
+  function clone(data) { return JSON.parse(JSON.stringify(data)); }
+  function hasData(data) { return isObject(data) && Object.keys(data).length > 0; }
+  function warn(message, error) { console.warn('VK: ' + message, error || ''); }
+  function callback(target, name, value) {
+    try { if (typeof target[name] === 'function') target[name](value); }
+    catch (error) { console.error('VK: ошибка обработчика ' + name, error); }
   }
 
-  function hasData(data) {
-    return !!data && typeof data === 'object' && Object.keys(data).length > 0;
-  }
-
-  function readLocal() {
+  function getProgress() {
+    if (memoryData !== null) return clone(memoryData);
     try {
       var raw = localStorage.getItem(STORE_KEY);
-      return raw ? (JSON.parse(raw) || {}) : {};
-    } catch (e) { return {}; }
+      var data = raw ? JSON.parse(raw) : {};
+      memoryData = isObject(data) ? data : {};
+    } catch (error) { memoryData = {}; }
+    return clone(memoryData);
   }
 
   function writeLocal(data) {
+    memoryData = clone(data);
     try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
-    catch (e) { /* localStorage может быть недоступен в приватном режиме */ }
+    catch (error) { /* The in-memory copy still retains every level in private mode. */ }
   }
 
-  function collectEnvironment() {
-    var sdkEnvironment = ysdk && ysdk.environment ? ysdk.environment : {};
-    var i18n = sdkEnvironment.i18n || {};
-    var browser = sdkEnvironment.browser || {};
-    var app = sdkEnvironment.app || {};
-    var device = ysdk ? ysdk.deviceInfo : null;
+  function bridgeFlag(name) {
+    try { return !!(bridge && typeof bridge[name] === 'function' && bridge[name]()); }
+    catch (error) { return false; }
+  }
 
-    // В разных выпусках SDK deviceInfo встречается как объект и как функция.
-    if (typeof device === 'function') {
-      try { device = device.call(ysdk); } catch (e) { device = null; }
-    }
+  function isEmbedded() {
+    return bridgeFlag('isEmbedded') || bridgeFlag('isWebView') || bridgeFlag('isIframe') ||
+      global.parent !== global || !!environment.appId;
+  }
 
-    environment.language = String(i18n.lang || 'ru').slice(0, 2).toLowerCase();
-    environment.browserLanguage = String(browser.lang || navigator.language || 'ru')
-      .slice(0, 2).toLowerCase();
-    environment.deviceType = device && device.type ? device.type : environment.deviceType;
-    environment.appId = app.id || '';
-    environment.payload = sdkEnvironment.payload || '';
-    environment.sdkAvailable = true;
+  function isNativeMobile() {
+    return environment.sdkAvailable && (bridgeFlag('isWebView') ||
+      /^mobile_(android|iphone|ipad)/.test(environment.platform));
+  }
 
-    document.documentElement.setAttribute('data-yandex-lang', environment.language);
-    document.documentElement.setAttribute('data-device', environment.deviceType);
+  // Bound platform calls: the CDN also loads in ordinary browsers, where Init
+  // otherwise waits forever for a platform parent that does not exist.
+  function send(method, data, timeout) {
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        var error = new Error(method + ': превышено время ожидания');
+        error.code = 'VK_ADAPTER_TIMEOUT';
+        reject(error);
+      }, timeout || REQUEST_TIMEOUT);
+      var request;
+      try { request = bridge.send(method, data || {}); }
+      catch (error) { clearTimeout(timer); reject(error); return; }
+      Promise.resolve(request).then(function (response) {
+        clearTimeout(timer);
+        resolve(response);
+      }, function (error) {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
+  function requireSuccess(data, method) {
+    if (!data || data.result !== true) throw new Error(method + ': операция не подтверждена');
+    return data;
   }
 
   function setPauseReason(reason, paused) {
@@ -1010,26 +977,8 @@ var Solver = (function () {
     if (paused) pauseReasons[reason] = true;
     else delete pauseReasons[reason];
     var isPaused = Object.keys(pauseReasons).length > 0;
-    if (!wasPaused && isPaused) hooks.pause(reason);
-    if (wasPaused && !isPaused) hooks.resume(reason);
-  }
-
-  function applyMediaMute() {
-    mutedMedia = [];
-    var media = document.querySelectorAll('audio, video');
-    for (var i = 0; i < media.length; i++) {
-      mutedMedia.push({ element: media[i], muted: media[i].muted });
-      media[i].muted = true;
-    }
-    hooks.mute();
-  }
-
-  function restoreMediaMute() {
-    for (var i = 0; i < mutedMedia.length; i++) {
-      mutedMedia[i].element.muted = mutedMedia[i].muted;
-    }
-    mutedMedia = [];
-    hooks.unmute();
+    if (!wasPaused && isPaused) callback(hooks, 'pause', reason);
+    if (wasPaused && !isPaused) callback(hooks, 'resume', reason);
   }
 
   function setMuteReason(reason, muted) {
@@ -1037,225 +986,486 @@ var Solver = (function () {
     if (muted) muteReasons[reason] = true;
     else delete muteReasons[reason];
     var isMuted = Object.keys(muteReasons).length > 0;
-    if (!wasMuted && isMuted) applyMediaMute();
-    if (wasMuted && !isMuted) restoreMediaMute();
-  }
-
-  function onPlatformPause() {
-    platformPaused = true;
-    gameplayWasMarkedAtPlatformPause = gameplayMarked;
-    gameplayMarked = false;
-    setPauseReason('platform', true);
-    setMuteReason('platform', true);
-  }
-
-  function onPlatformResume() {
-    platformPaused = false;
-    // При обычной системной паузе SDK уже восстановил Gameplay API. Фиксируем
-    // это до вызова игрового resume-hook, чтобы не отправить второй start().
-    if (gameplayRequested && gameplayWasMarkedAtPlatformPause) gameplayMarked = true;
-    setMuteReason('platform', false);
-    setPauseReason('platform', false);
-    // Если игровой экран открылся уже во время рекламы, запускаем его явно.
-    if (gameplayRequested && !gameplayMarked) startGameplay();
-    gameplayWasMarkedAtPlatformPause = false;
-  }
-
-  function subscribeToPlatformEvents() {
-    if (!ysdk || typeof ysdk.on !== 'function') return;
-    ysdk.on('game_api_pause', onPlatformPause);
-    ysdk.on('game_api_resume', onPlatformResume);
-  }
-
-  function result(initialData) {
-    return {
-      initialData: initialData || {},
-      environment: environment,
-      sdkAvailable: environment.sdkAvailable
-    };
-  }
-
-  function init() {
-    if (initPromise) return initPromise;
-    var localData = readLocal();
-
-    if (!global.YaGames || typeof global.YaGames.init !== 'function') {
-      initPromise = Promise.resolve(result(localData));
-      return initPromise;
+    if (!wasMuted && isMuted) {
+      mutedMedia = [];
+      var media = document.querySelectorAll('audio, video');
+      for (var i = 0; i < media.length; i++) {
+        mutedMedia.push({ element: media[i], muted: media[i].muted });
+        media[i].muted = true;
+      }
+      callback(hooks, 'mute');
+    } else if (wasMuted && !isMuted) {
+      for (var j = 0; j < mutedMedia.length; j++) {
+        mutedMedia[j].element.muted = mutedMedia[j].muted;
+      }
+      mutedMedia = [];
+      callback(hooks, 'unmute');
     }
+  }
 
-    initPromise = global.YaGames.init().then(function (instance) {
-      ysdk = instance;
-      collectEnvironment();
-      subscribeToPlatformEvents();
-      return ysdk.getPlayer();
-    }).then(function (sdkPlayer) {
-      player = sdkPlayer;
-      // Облако всегда проверяется первым. Локальные данные используются только
-      // при пустом ответе или ошибке облачного запроса.
-      return player.getData([CLOUD_KEY]).then(function (cloud) {
-        var cloudData = cloud && cloud[CLOUD_KEY];
-        if (hasData(cloudData)) {
-          writeLocal(cloudData);
-          return result(cloudData);
+  function emit(name, detail) {
+    global.dispatchEvent(new CustomEvent(name, { detail: detail }));
+  }
+
+  function fullscreenStatus() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement || nativeFullscreen);
+  }
+
+  function notifyFullscreen() {
+    var fullscreen = fullscreenStatus();
+    callback(hooks, 'fullscreen', fullscreen);
+    emit('vkfullscreenchange', { fullscreen: fullscreen });
+  }
+
+  function updateConfig(next) {
+    if (!isObject(next)) return;
+    Object.keys(next).forEach(function (key) { config[key] = next[key]; });
+    var root = document.documentElement;
+    if (next.insets && isObject(next.insets)) {
+      ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+        var value = next.insets[side];
+        if (typeof value === 'number' && isFinite(value)) {
+          root.style.setProperty('--vk-inset-' + side, Math.max(0, value) + 'px');
         }
-        if (hasData(localData)) saveProgress(localData, true);
-        return result(localData);
+      });
+    }
+    ['width', 'height'].forEach(function (axis) {
+      var value = next['viewport_' + axis];
+      if (typeof value === 'number' && isFinite(value) && value > 0) {
+        root.style.setProperty('--vk-viewport-' + axis, value + 'px');
+      }
+    });
+    if (next.appearance === 'light' || next.appearance === 'dark') {
+      root.setAttribute('data-vk-appearance', next.appearance);
+    }
+    // This field is not promised by current Bridge types. Observe it only when
+    // a client actually supplies it; result:true for view colors is not proof.
+    if (typeof next.fullscreen === 'boolean') {
+      nativeFullscreen = next.fullscreen;
+      notifyFullscreen();
+    }
+    var snapshot = clone(config);
+    callback(hooks, 'config', snapshot);
+    emit('vkconfigchange', snapshot);
+  }
+
+  function subscribe() {
+    if (typeof bridge.subscribe !== 'function') return;
+    bridge.subscribe(function (event) {
+      var detail = event && event.detail;
+      if (!detail) return;
+      if (detail.type === 'VKWebAppUpdateConfig' || detail.type === 'VKWebAppUpdateInsets') {
+        updateConfig(detail.data);
+      } else if (detail.type === 'VKWebAppViewHide') {
+        setPauseReason('platform', true);
+        setMuteReason('platform', true);
+        flushProgress();
+      } else if (detail.type === 'VKWebAppViewRestore') {
+        setMuteReason('platform', false);
+        setPauseReason('platform', false);
+      }
+    });
+  }
+
+  function byteLength(value) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value).length;
+    return unescape(encodeURIComponent(value)).length;
+  }
+
+  function checksum(value) {
+    var hash = 2166136261;
+    for (var i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  function splitSnapshot(json) {
+    var chunks = [];
+    for (var offset = 0; offset < json.length;) {
+      var low = 1;
+      var high = Math.min(json.length - offset, MAX_VALUE_BYTES);
+      var size = 0;
+      while (low <= high) {
+        var middle = Math.floor((low + high) / 2);
+        if (byteLength(JSON.stringify(json.slice(offset, offset + middle))) <= MAX_VALUE_BYTES) {
+          size = middle;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      if (!size || chunks.length >= MAX_CHUNKS) throw new Error('Прогресс слишком велик для VK Storage');
+      chunks.push(JSON.stringify(json.slice(offset, offset + size)));
+      offset += size;
+    }
+    return chunks;
+  }
+
+  function getValues(keys) {
+    return send('VKWebAppStorageGet', { keys: keys }).then(function (data) {
+      if (!data || !Array.isArray(data.keys)) throw new Error('Некорректный ответ VK Storage');
+      var values = Object.create(null);
+      data.keys.forEach(function (entry) {
+        if (entry && typeof entry.key === 'string' && typeof entry.value === 'string') {
+          values[entry.key] = entry.value;
+        }
+      });
+      return values;
+    });
+  }
+
+  function loadCloud() {
+    return getValues([CLOUD_KEY]).then(function (values) {
+      if (!Object.prototype.hasOwnProperty.call(values, CLOUD_KEY)) {
+        throw new Error('VK Storage не вернул запрошенный ключ');
+      }
+      if (!values[CLOUD_KEY]) return {};
+      var manifest = JSON.parse(values[CLOUD_KEY]);
+      if (!isObject(manifest)) throw new Error('Некорректный прогресс VK Storage');
+      if (manifest.format !== CLOUD_FORMAT) return manifest; // Legacy whole JSON object.
+      if (!/^[ab]$/.test(manifest.slot) || !Number.isInteger(manifest.count) ||
+          manifest.count < 1 || manifest.count > MAX_CHUNKS || typeof manifest.checksum !== 'string') {
+        throw new Error('Некорректный индекс частей VK Storage');
+      }
+      var keys = [];
+      for (var i = 0; i < manifest.count; i++) keys.push(CLOUD_KEY + '_' + manifest.slot + '_' + i);
+      return getValues(keys).then(function (parts) {
+        var json = keys.map(function (key) {
+          if (!parts[key]) throw new Error('В VK Storage отсутствует часть сохранения');
+          var chunk = JSON.parse(parts[key]);
+          if (typeof chunk !== 'string') throw new Error('Повреждена часть сохранения VK Storage');
+          return chunk;
+        }).join('');
+        if (checksum(json) !== manifest.checksum) throw new Error('Неполное сохранение VK Storage');
+        var data = JSON.parse(json);
+        if (!isObject(data)) throw new Error('Некорректные данные сохранения VK Storage');
+        cloudSlot = manifest.slot;
+        return data;
+      });
+    });
+  }
+
+  function mergeProgress(local, cloud) {
+    var localIsNewer = Number(local.updatedAt || 0) > Number(cloud.updatedAt || 0);
+    var newest = localIsNewer ? local : cloud;
+    var older = localIsNewer ? cloud : local;
+    var merged = clone(hasData(newest) ? newest : older);
+    // Preserve levels which have never been edited on the newer device. An
+    // explicit empty path on that device still means the player erased it.
+    if (isObject(older.paths)) {
+      merged.paths = isObject(merged.paths) ? merged.paths : {};
+      merged.closed = isObject(merged.closed) ? merged.closed : {};
+      Object.keys(older.paths).forEach(function (level) {
+        if (!Object.prototype.hasOwnProperty.call(merged.paths, level)) {
+          merged.paths[level] = older.paths[level];
+          if (isObject(older.closed)) merged.closed[level] = older.closed[level] || 0;
+        }
+      });
+    }
+    if (hasData(local) && hasData(cloud)) {
+      merged.unlocked = Math.max(Number(local.unlocked) || 1, Number(cloud.unlocked) || 1);
+      merged.score = Math.max(Number(local.score) || 0, Number(cloud.score) || 0);
+    }
+    return merged;
+  }
+
+  function writeCloud(data) {
+    var json = JSON.stringify(data);
+    var chunks = splitSnapshot(json);
+    var slot = cloudSlot === 'a' ? 'b' : 'a';
+    var chain = Promise.resolve();
+    // Write an inactive bank and commit its manifest last. An interrupted write
+    // cannot expose half of the new progress or destroy the committed bank.
+    chunks.forEach(function (value, index) {
+      chain = chain.then(function () {
+        return send('VKWebAppStorageSet', { key: CLOUD_KEY + '_' + slot + '_' + index, value: value });
+      }).then(function (response) { requireSuccess(response, 'VKWebAppStorageSet'); });
+    });
+    return chain.then(function () {
+      var value = JSON.stringify({ format: CLOUD_FORMAT, slot: slot, count: chunks.length, checksum: checksum(json) });
+      return send('VKWebAppStorageSet', { key: CLOUD_KEY, value: value }).then(function (response) {
+        requireSuccess(response, 'VKWebAppStorageSet');
+        cloudSlot = slot;
+      }).catch(function (error) {
+        // An uncertain manifest response may already have committed. Reusing
+        // that bank could corrupt it, so retain local data until the next Init.
+        storageReady = false;
+        throw error;
       });
     }).catch(function (error) {
-      console.warn('Яндекс Игры: облачные данные недоступны, используется localStorage.', error);
-      return result(localData);
+      // A timed-out request may still arrive later; do not reuse its bank.
+      if (error && error.code === 'VK_ADAPTER_TIMEOUT') storageReady = false;
+      throw error;
     });
-
-    return initPromise;
   }
 
-  function sendCloudData(data, flush) {
-    if (!player || !data) return Promise.resolve(false);
-    var payload = {};
-    payload[CLOUD_KEY] = cloneData(data);
+  function flushProgress() {
+    if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = 0; }
     cloudChain = cloudChain.catch(function () {}).then(function () {
-      return player.setData(payload, !!flush);
-    }).then(function () {
-      return true;
-    }).catch(function (error) {
-      pendingCloudData = cloneData(data);
-      console.warn('Яндекс Игры: не удалось сохранить прогресс в облаке.', error);
-      return false;
+      if (!storageReady || !pendingSave) return false;
+      var job = pendingSave;
+      pendingSave = null;
+      return Promise.resolve().then(function () { return writeCloud(job.data); }).then(function () {
+        return true;
+      }).catch(function (error) {
+        if (!pendingSave || pendingSave.sequence < job.sequence) pendingSave = job;
+        warn('не удалось сохранить прогресс; локальная копия сохранена.', error);
+        return false;
+      });
     });
     return cloudChain;
   }
 
   function saveProgress(data, flush) {
-    pendingCloudData = cloneData(data);
-    if (!player) return Promise.resolve(false);
-
-    if (cloudTimer) {
-      clearTimeout(cloudTimer);
-      cloudTimer = 0;
-    }
-    if (flush) {
-      var immediate = pendingCloudData;
-      pendingCloudData = null;
-      return sendCloudData(immediate, true);
-    }
-
-    cloudTimer = setTimeout(function () {
-      cloudTimer = 0;
-      var queued = pendingCloudData;
-      pendingCloudData = null;
-      sendCloudData(queued, false);
-    }, CLOUD_SAVE_DELAY);
+    if (!isObject(data)) return Promise.resolve(false);
+    var snapshot;
+    try { snapshot = clone(data); }
+    catch (error) { warn('прогресс нельзя сериализовать.', error); return Promise.resolve(false); }
+    writeLocal(snapshot);
+    pendingSave = { data: snapshot, sequence: ++saveSequence };
+    if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = 0; }
+    if (!storageReady) return Promise.resolve(false);
+    if (flush) return flushProgress();
+    cloudTimer = setTimeout(function () { cloudTimer = 0; flushProgress(); }, CLOUD_SAVE_DELAY);
     return Promise.resolve(true);
   }
 
-  function gameReady() {
-    if (readySent || !ysdk) return;
-    readySent = true;
-    if (ysdk.features && ysdk.features.LoadingAPI &&
-        typeof ysdk.features.LoadingAPI.ready === 'function') {
-      ysdk.features.LoadingAPI.ready();
-    }
+  function initResult() {
+    return { initialData: getProgress(), environment: environment, sdkAvailable: environment.sdkAvailable };
   }
 
-  function startGameplay() {
-    gameplayRequested = true;
-    if (!ysdk || platformPaused || gameplayMarked) return;
-    if (ysdk.features && ysdk.features.GameplayAPI &&
-        typeof ysdk.features.GameplayAPI.start === 'function') {
-      ysdk.features.GameplayAPI.start();
-      gameplayMarked = true;
-    }
+  function syncCloud() {
+    return loadCloud().then(function (cloud) {
+      storageReady = true;
+      var merged = mergeProgress(getProgress(), cloud);
+      writeLocal(merged);
+      if (hasData(merged) && JSON.stringify(merged) !== JSON.stringify(cloud)) saveProgress(merged, true);
+    }).catch(function (error) {
+      // Do not overwrite an unknown remote snapshot after a failed read.
+      warn('облако недоступно; используется локальный прогресс.', error);
+    });
   }
 
-  function stopGameplay() {
-    gameplayRequested = false;
-    if (!ysdk || !gameplayMarked) return;
-    if (ysdk.features && ysdk.features.GameplayAPI &&
-        typeof ysdk.features.GameplayAPI.stop === 'function') {
-      ysdk.features.GameplayAPI.stop();
+  function activatePlatform() {
+    environment.sdkAvailable = true;
+    if (isNativeMobile()) {
+      send('VKWebAppSetViewSettings', { status_bar_style: 'light', action_bar_color: '#101522', navigation_bar_color: '#101522' })
+        .catch(function (error) { warn('настройки панелей клиента недоступны.', error); });
     }
-    gameplayMarked = false;
+    preloadAds();
+    return syncCloud();
   }
 
-  function showAd(method, callbacks) {
+  // Холодный старт клиента бывает медленнее первого ожидания. Без повтора
+  // единственный неуспевший VKWebAppInit навсегда отключал бы рекламу и облако.
+  function retryHandshake(attempt) {
+    if (environment.sdkAvailable || attempt > INIT_RETRIES || !isEmbedded()) return;
+    setTimeout(function () {
+      if (environment.sdkAvailable) return;
+      send('VKWebAppInit', {}, INIT_RETRY_TIMEOUT).then(function (data) {
+        requireSuccess(data, 'VKWebAppInit');
+        return activatePlatform();
+      }).then(function () {
+        emit('vkplatformchange', { sdkAvailable: true });
+      }, function (error) {
+        warn('повторный VKWebAppInit не удался.', error);
+        retryHandshake(attempt + 1);
+      });
+    }, INIT_RETRY_DELAY * attempt);
+  }
+
+  function init() {
+    if (initPromise) return initPromise;
+    getProgress();
+    document.documentElement.setAttribute('data-vk-lang', environment.language);
+    document.documentElement.setAttribute('data-device', environment.deviceType);
+    bridge = global.vkBridge;
+    if (!bridge || typeof bridge.send !== 'function') {
+      initPromise = Promise.resolve(initResult());
+      return initPromise;
+    }
+    subscribe();
+    var startup = send('VKWebAppInit', {}, INIT_TIMEOUT);
+    if (!isEmbedded()) {
+      startup.catch(function () {});
+      initPromise = Promise.resolve(initResult());
+      return initPromise;
+    }
+    initPromise = startup.then(function (data) {
+      requireSuccess(data, 'VKWebAppInit');
+      return activatePlatform();
+    }).catch(function (error) {
+      warn('Bridge недоступен; игра работает локально.', error);
+      retryHandshake(1);
+    }).then(initResult);
+    return initPromise;
+  }
+
+  function canShowAds() {
+    return !!(environment.sdkAvailable && bridge && !adInProgress &&
+      supportsMethod('VKWebAppShowNativeAds'));
+  }
+
+  // Клиент может не заявлять о поддержке метода вовсе; отсутствие ответа
+  // трактуем как «поддерживает», отказ — как «нет».
+  function supportsMethod(name) {
+    if (!bridge || typeof bridge.supports !== 'function') return !!bridge;
+    try { return bridge.supports(name) !== false; }
+    catch (error) { return true; }
+  }
+
+  function describeError(error) {
+    if (!error) return '';
+    var data = error.error_data || (error.error && error.error.error_data) || {};
+    var reason = data.error_reason;
+    if (reason && typeof reason === 'object') reason = reason.error_msg || reason.error_message || '';
+    var text = data.error_msg || data.error_description || reason || error.message ||
+      (data.error_code === undefined ? '' : 'код ' + data.error_code);
+    return String(text || error.error_type || '').slice(0, 160);
+  }
+
+  // Проверка доступности заодно просит клиент заранее загрузить ролик — без неё
+  // первый VKWebAppShowNativeAds часто отвечает «рекламы нет в наличии».
+  function preloadAd(format) {
+    if (!environment.sdkAvailable || !bridge || !supportsMethod('VKWebAppCheckNativeAds')) {
+      return Promise.resolve(false);
+    }
+    return send('VKWebAppCheckNativeAds', { ad_format: format, use_waterfall: true }, AD_CHECK_TIMEOUT)
+      .then(function (data) {
+        adReady[format] = !!(data && data.result === true);
+        return adReady[format];
+      }, function (error) {
+        adReady[format] = false;
+        warn('не удалось проверить рекламу «' + format + '».', error);
+        return false;
+      });
+  }
+
+  function preloadAds() {
+    AD_FORMATS.forEach(function (format) { preloadAd(format); });
+  }
+
+  function requestAd(format, allowRetry) {
+    var instant = allowRetry;
+    var retryWindow = setTimeout(function () { instant = false; }, AD_RETRY_WINDOW);
+    return send('VKWebAppShowNativeAds', { ad_format: format, use_waterfall: true }, AD_TIMEOUT)
+      .then(function (data) {
+        clearTimeout(retryWindow);
+        adReady[format] = false;
+        return !!(data && data.result === true);
+      }, function (error) {
+        clearTimeout(retryWindow);
+        adReady[format] = false;
+        // Повторяем только мгновенный отказ: иначе закрытый игроком ролик
+        // запустился бы во второй раз.
+        if (!instant || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
+        warn('ролик «' + format + '» не был готов, просим клиент загрузить его.', error);
+        return preloadAd(format).then(function () { return requestAd(format, false); });
+      });
+  }
+
+  function showAd(format, callbacks) {
     callbacks = callbacks || {};
-    if (!ysdk || !ysdk.adv || typeof ysdk.adv[method] !== 'function' || adInProgress) {
-      return false;
-    }
-
-    var resumeGameplayAfterAd = gameplayRequested;
-    var finished = false;
+    if (!canShowAds()) return false;
     adInProgress = true;
-    stopGameplay();
     setPauseReason('advertising', true);
     setMuteReason('advertising', true);
-
-    function finish(wasShown, error) {
-      if (finished) return;
-      finished = true;
+    callback(callbacks, 'onOpen');
+    var shown = false;
+    requestAd(format, true).then(function (result) {
+      shown = result;
+      if (shown && format === 'reward') callback(callbacks, 'onRewarded');
+    }, function (error) {
+      warn('реклама не показана.', error);
+      callback(callbacks, 'onError', error);
+    }).then(function () {
       adInProgress = false;
-      if (error) {
-        console.error('Яндекс Игры: ошибка показа рекламы.', error);
-        try { if (callbacks.onError) callbacks.onError(error); }
-        catch (callbackError) { console.error(callbackError); }
-      }
       setMuteReason('advertising', false);
       setPauseReason('advertising', false);
-      try { if (callbacks.onClose) callbacks.onClose(!!wasShown); }
-      catch (callbackError) { console.error(callbackError); }
-      if (resumeGameplayAfterAd) startGameplay();
-    }
-
-    var sdkCallbacks = {
-      onOpen: function () {
-        if (callbacks.onOpen) callbacks.onOpen();
-      },
-      onClose: function (wasShown) { finish(wasShown, null); },
-      onError: function (error) { finish(false, error); }
-    };
-    if (method === 'showRewardedVideo') {
-      sdkCallbacks.onRewarded = function () {
-        if (callbacks.onRewarded) callbacks.onRewarded();
-      };
-    }
-
-    try {
-      ysdk.adv[method]({ callbacks: sdkCallbacks });
-    } catch (error) {
-      finish(false, error);
-    }
+      callback(callbacks, 'onClose', shown);
+      preloadAd(format);
+    });
     return true;
   }
 
-  function registerLifecycleHooks(nextHooks) {
-    nextHooks = nextHooks || {};
-    ['pause', 'resume', 'mute', 'unmute'].forEach(function (name) {
-      if (typeof nextHooks[name] === 'function') hooks[name] = nextHooks[name];
-    });
-    if (Object.keys(pauseReasons).length) hooks.pause('platform');
-    if (Object.keys(muteReasons).length) hooks.mute();
+  function canFullscreen() {
+    var root = document.documentElement;
+    return isNativeMobile() || !!((root.requestFullscreen && document.fullscreenEnabled !== false) ||
+      (root.webkitRequestFullscreen && document.webkitFullscreenEnabled !== false));
   }
 
-  // Дополнительная страховка для локального запуска и браузеров, где событие
-  // платформы приходит с задержкой.
-  document.addEventListener('visibilitychange', function () {
+  function setFullscreen(enabled) {
+    var operations = [];
+    if (isNativeMobile()) {
+      // Compatibility with clients implementing the requested extension.
+      // Current official types document only the color/style fields:
+      // https://github.com/VKCOM/vk-bridge/blob/master/packages/core/src/types/data.ts
+      operations.push(send('VKWebAppSetViewSettings', { status_bar_style: 'light', fullscreen: enabled })
+        .then(function (data) { requireSuccess(data, 'VKWebAppSetViewSettings'); }));
+    }
+    var target = enabled ? document.documentElement : document;
+    var method = enabled ? (target.requestFullscreen || target.webkitRequestFullscreen) :
+      (target.exitFullscreen || target.webkitExitFullscreen);
+    if (method && (enabled || document.fullscreenElement || document.webkitFullscreenElement)) {
+      // Call synchronously inside the click, before waiting for any Bridge call.
+      try { operations.push(Promise.resolve(method.call(target))); }
+      catch (error) { operations.push(Promise.reject(error)); }
+    }
+    return Promise.all(operations.map(function (operation) {
+      return operation.catch(function (error) { warn('полноэкранный режим недоступен.', error); });
+    })).then(function () { notifyFullscreen(); return fullscreenStatus() === enabled; });
+  }
+
+  function registerLifecycleHooks(next) {
+    next = next || {};
+    ['pause', 'resume', 'mute', 'unmute', 'config', 'fullscreen'].forEach(function (name) {
+      if (typeof next[name] === 'function') hooks[name] = next[name];
+    });
+    if (Object.keys(pauseReasons).length) callback(hooks, 'pause', 'platform');
+    if (Object.keys(muteReasons).length) callback(hooks, 'mute');
+    if (Object.keys(config).length) callback(hooks, 'config', clone(config));
+  }
+
+  function onVisibility() {
     var hidden = document.visibilityState === 'hidden';
     setPauseReason('visibility', hidden);
     setMuteReason('visibility', hidden);
-  });
+    if (hidden) flushProgress();
+  }
+  document.addEventListener('visibilitychange', onVisibility);
+  document.addEventListener('fullscreenchange', notifyFullscreen);
+  document.addEventListener('webkitfullscreenchange', notifyFullscreen);
+  global.addEventListener('pagehide', flushProgress);
+  onVisibility();
 
-  global.YandexGames = {
+  global.VKGames = {
     init: init,
-    gameReady: gameReady,
-    startGameplay: startGameplay,
-    stopGameplay: stopGameplay,
+    getProgress: getProgress,
     saveProgress: saveProgress,
-    showFullscreenAd: function (callbacks) { return showAd('showFullscreenAdv', callbacks); },
-    showRewardedAd: function (callbacks) { return showAd('showRewardedVideo', callbacks); },
-    canShowAds: function () {
-      return !!(ysdk && ysdk.adv && typeof ysdk.adv.showRewardedVideo === 'function');
+    flushProgress: flushProgress,
+    // Kept as game-side lifecycle boundaries; VK Bridge has no matching API.
+    gameReady: function () {},
+    startGameplay: function () {},
+    stopGameplay: function () {},
+    showFullscreenAd: function (callbacks) { return showAd('interstitial', callbacks); },
+    showRewardedAd: function (callbacks) { return showAd('reward', callbacks); },
+    canShowAds: canShowAds,
+    preloadAds: preloadAds,
+    adStatus: function () { return clone(adReady); },
+    describeError: describeError,
+    requestFullscreen: function () { return setFullscreen(true); },
+    exitFullscreen: function () { return setFullscreen(false); },
+    toggleFullscreen: function () { return setFullscreen(!fullscreenStatus()); },
+    fullscreenStatus: fullscreenStatus,
+    canFullscreen: canFullscreen,
+    fullscreen: {
+      request: function () { return setFullscreen(true); },
+      exit: function () { return setFullscreen(false); },
+      toggle: function () { return setFullscreen(!fullscreenStatus()); },
+      status: fullscreenStatus,
+      available: canFullscreen
     },
+    getConfig: function () { return clone(config); },
     registerLifecycleHooks: registerLifecycleHooks,
     environment: environment
   };
@@ -1277,7 +1487,7 @@ var Solver = (function () {
   var FAST_FADE_SHARE = 0.04;// мягкий вход в режим ускоренной прокрутки
   var START_CPS = 10;        // стартовая/финишная скорость — видно отдельные клетки
   var MIN_AVERAGE_CPS = 5;   // короткие забеги не растягиваем дольше необходимого
-  var Platform = window.YandexGames || null;
+  var Platform = window.VKGames || null;
 
   // ---------------------------------------------------------------- состояние
   var G = {
@@ -1305,6 +1515,7 @@ var Solver = (function () {
     baseCps: START_CPS, u: 0
   };
   var runtimePauseReasons = {};
+  var startupReady = false;
 
   var canvas = document.getElementById('field');
   var ctx = canvas.getContext('2d');
@@ -1328,6 +1539,7 @@ var Solver = (function () {
     btnClose: document.getElementById('btnClose'),
     btnUndo: document.getElementById('btnUndo'),
     btnClear: document.getElementById('btnClear'),
+    btnFullscreen: document.getElementById('btnFullscreen'),
     solutionTools: document.getElementById('solutionTools'),
     solutionBtns: document.querySelectorAll('#solutionTools button'),
     btnSkip: document.getElementById('btnSkip'),
@@ -1344,9 +1556,7 @@ var Solver = (function () {
     tools: document.getElementById('toolSwitch'),
     toolBtns: document.querySelectorAll('#toolSwitch button'),
     rules: document.querySelector('.rules'),
-    app: document.querySelector('.app'),
-    scrollbar: document.getElementById('customScrollbar'),
-    scrollbarThumb: document.getElementById('customScrollbarThumb')
+    app: document.querySelector('.app')
   };
 
   // ------------------------------------------------------------- вспомогалки
@@ -1374,6 +1584,7 @@ var Solver = (function () {
 
   // ----------------------------------------------------------- сохранение
   function load() {
+    if (Platform) return Platform.getProgress();
     try {
       var raw = localStorage.getItem(STORE_KEY);
       if (!raw) return {};
@@ -1382,22 +1593,21 @@ var Solver = (function () {
   }
 
   function save(immediateCloud) {
-    try {
-      var data = load();
-      data.unlocked = G.unlocked;
-      data.score = G.score;
-      data.paths = data.paths || {};
-      data.paths[G.level] = G.path.join(',');
-      data.closed = data.closed || {};
-      data.closed[G.level] = G.closed ? 1 : 0;
-      data.tool = G.tool;
-      data.updatedAt = Date.now();
-      localStorage.setItem(STORE_KEY, JSON.stringify(data));
-      // Локальная и облачная копии обновляются одним снимком данных. Частые
-      // изменения рельсов объединяются платформенным адаптером, чтобы не
-      // превысить лимит запросов; важный прогресс отправляется сразу.
-      if (Platform) Platform.saveProgress(data, !!immediateCloud);
-    } catch (e) { /* приватный режим — просто не сохраняем */ }
+    var data = load();
+    data.unlocked = G.unlocked;
+    data.score = G.score;
+    data.paths = data.paths || {};
+    data.paths[G.level] = G.path.join(',');
+    data.closed = data.closed || {};
+    data.closed[G.level] = G.closed ? 1 : 0;
+    data.tool = G.tool;
+    data.updatedAt = Date.now();
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
+    catch (e) { /* Облачное сохранение работает и без localStorage. */ }
+    // Локальная и облачная копии обновляются одним снимком данных. Частые
+    // изменения рельсов объединяются платформенным адаптером, чтобы не
+    // превысить лимит запросов; важный прогресс отправляется сразу.
+    if (Platform) Platform.saveProgress(data, !!immediateCloud);
   }
 
   // -------------------------------------------------------------- уровень
@@ -1486,7 +1696,7 @@ var Solver = (function () {
   function resize() {
     var wrap = canvas.parentElement;
     var avail = wrap.clientWidth || 900;
-    cs = Math.max(8, Math.floor(avail / W));
+    cs = Math.max(1, Math.floor(avail / W));
     dpr = window.devicePixelRatio || 1;
     var cw = W * cs, ch = H * cs;
     canvas.style.width = cw + 'px';
@@ -1496,27 +1706,6 @@ var Solver = (function () {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ox = 0; oy = 0;
     draw();
-    syncCustomScrollbar();
-  }
-
-  function syncCustomScrollbar() {
-    if (!el.app || !el.scrollbar || !el.scrollbarThumb) return;
-    var maxScroll = Math.max(0, el.app.scrollHeight - el.app.clientHeight);
-    if (maxScroll <= 1) {
-      el.scrollbar.hidden = true;
-      return;
-    }
-
-    el.scrollbar.hidden = false;
-    var inset = 3;
-    var trackHeight = Math.max(1, el.scrollbar.clientHeight - inset * 2);
-    var thumbHeight = Math.max(44,
-      Math.round(trackHeight * el.app.clientHeight / el.app.scrollHeight));
-    thumbHeight = Math.min(trackHeight, thumbHeight);
-    var travel = Math.max(0, trackHeight - thumbHeight);
-    var top = inset + travel * el.app.scrollTop / maxScroll;
-    el.scrollbarThumb.style.height = thumbHeight + 'px';
-    el.scrollbarThumb.style.transform = 'translateY(' + Math.round(top) + 'px)';
   }
 
   function cx(c) { return ox + c * cs + cs / 2; }
@@ -2215,6 +2404,13 @@ var Solver = (function () {
     startGameplayIfInteractive();
   }
 
+  // Причину отказа показываем игроку: без неё «реклама не работает» неотличимо
+  // от «ролик закрыли раньше времени».
+  function adReason(error) {
+    var text = Platform && Platform.describeError ? Platform.describeError(error) : '';
+    return text ? ' (' + text + ')' : '';
+  }
+
   // Полноэкранную рекламу показываем только после победы и только по явному
   // переходу игрока к следующему уровню — то есть строго между уровнями.
   function goToNextLevel() {
@@ -2233,11 +2429,12 @@ var Solver = (function () {
 
   function openLockedLevelWithAd(levelIndex) {
     if (!Platform || !Platform.canShowAds()) {
-      say('Видео для разблокировки доступно в версии игры на Яндекс Играх.', 'warn');
+      say('Видео для разблокировки сейчас недоступно. Проходи уровни по порядку.', 'warn');
       return;
     }
 
     var rewarded = false;
+    var failure = '';
     var launched = Platform.showRewardedAd({
       onRewarded: function () {
         rewarded = true;
@@ -2246,13 +2443,15 @@ var Solver = (function () {
         G.unlocked = Math.max(G.unlocked, levelIndex + 1);
         save(true);
       },
+      onError: function (error) { failure = adReason(error); },
       onClose: function () {
         if (rewarded) {
           loadLevel(levelIndex, true);
           say('Уровень ' + (levelIndex + 1) + ' открыт за просмотр видео.', 'good');
         } else {
           syncUI();
-          say('Чтобы открыть уровень, досмотри видео до награды.', 'warn');
+          say(failure ? 'Видео не показано' + failure + '. Попробуй ещё раз позже.'
+            : 'Чтобы открыть уровень, досмотри видео до награды.', 'warn');
         }
       }
     });
@@ -2436,6 +2635,7 @@ var Solver = (function () {
   canvas.addEventListener('pointercancel', endDrag);
 
   document.addEventListener('keydown', function (e) {
+    if (!startupReady || runtimePauseReasons.platform) return;
     if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     if (G.run && (G.mode === 'over' || G.mode === 'replay')) {
       if (e.key === 'ArrowLeft') {
@@ -2646,7 +2846,17 @@ var Solver = (function () {
       el.len.textContent = '—';
       el.speed.textContent = '—';
     }
-    syncCustomScrollbar();
+  }
+
+  // inert блокирует ввод в новых браузерах, перехват — также в старых WebView.
+  if (el.app) {
+    ['click', 'pointerdown', 'pointermove', 'pointerup', 'input'].forEach(function (type) {
+      el.app.addEventListener(type, function (event) {
+        if (startupReady && !runtimePauseReasons.platform) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    });
   }
 
   el.btnRun.onclick = startRun;
@@ -2696,60 +2906,49 @@ var Solver = (function () {
   };
   el.btnStop.onclick = function () { G.runScore = 0; backToDraw(); say('Забег прерван.'); };
 
-  window.addEventListener('resize', resize);
-  window.addEventListener('load', syncCustomScrollbar);
-
-  var scrollbarDrag = null;
-  if (el.app && el.scrollbar && el.scrollbarThumb) {
-    el.app.addEventListener('scroll', syncCustomScrollbar, { passive: true });
-
-    el.scrollbar.addEventListener('pointerdown', function (event) {
-      event.preventDefault();
-      syncCustomScrollbar();
-      var trackRect = el.scrollbar.getBoundingClientRect();
-      var thumbHeight = el.scrollbarThumb.offsetHeight;
-      var inset = 3;
-      var travel = Math.max(1, trackRect.height - inset * 2 - thumbHeight);
-      var maxScroll = Math.max(0, el.app.scrollHeight - el.app.clientHeight);
-
-      if (event.target !== el.scrollbarThumb) {
-        var targetTop = event.clientY - trackRect.top - inset - thumbHeight / 2;
-        var share = Math.max(0, Math.min(1, targetTop / travel));
-        el.app.scrollTop = share * maxScroll;
-        syncCustomScrollbar();
-        return;
-      }
-
-      scrollbarDrag = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        startScroll: el.app.scrollTop,
-        maxScroll: maxScroll,
-        travel: travel
-      };
-      el.scrollbar.classList.add('dragging');
-      el.scrollbar.setPointerCapture(event.pointerId);
-    });
-
-    el.scrollbar.addEventListener('pointermove', function (event) {
-      if (!scrollbarDrag || event.pointerId !== scrollbarDrag.pointerId) return;
-      event.preventDefault();
-      var delta = event.clientY - scrollbarDrag.startY;
-      el.app.scrollTop = scrollbarDrag.startScroll +
-        delta * scrollbarDrag.maxScroll / scrollbarDrag.travel;
-    });
-
-    function endScrollbarDrag(event) {
-      if (!scrollbarDrag || event.pointerId !== scrollbarDrag.pointerId) return;
-      try { el.scrollbar.releasePointerCapture(event.pointerId); } catch (error) { }
-      scrollbarDrag = null;
-      el.scrollbar.classList.remove('dragging');
-      syncCustomScrollbar();
-    }
-
-    el.scrollbar.addEventListener('pointerup', endScrollbarDrag);
-    el.scrollbar.addEventListener('pointercancel', endScrollbarDrag);
+  function syncFullscreenUI() {
+    if (!el.btnFullscreen || !Platform) return;
+    var active = Platform.fullscreenStatus();
+    el.btnFullscreen.hidden = !Platform.canFullscreen();
+    el.btnFullscreen.setAttribute('aria-pressed', active ? 'true' : 'false');
+    el.btnFullscreen.textContent = active ? 'Выйти из полного экрана' : 'На весь экран';
   }
+
+  if (el.btnFullscreen && Platform) {
+    el.btnFullscreen.onclick = function () {
+      var entering = !Platform.fullscreenStatus();
+      // Вызов остаётся внутри обработчика клика: браузеру нужен жест игрока.
+      var change = Platform.toggleFullscreen();
+      el.btnFullscreen.disabled = true;
+      Promise.resolve(change).then(function (succeeded) {
+        if (!succeeded && entering) {
+          say('Полный экран недоступен в этом окне.', 'warn');
+        }
+      }).catch(function () {
+        say('Не удалось изменить полноэкранный режим.', 'warn');
+      }).finally(function () {
+        el.btnFullscreen.disabled = false;
+        syncFullscreenUI();
+        resize();
+      });
+    };
+  }
+
+  window.addEventListener('resize', resize);
+  window.addEventListener('vkconfigchange', function () {
+    resize();
+    syncFullscreenUI();
+  });
+  window.addEventListener('vkfullscreenchange', function () {
+    syncFullscreenUI();
+    resize();
+  });
+  // Медленный клиент подтверждает VKWebAppInit уже после старта: тогда кнопки
+  // «🎬» закрытых уровней надо включить задним числом.
+  window.addEventListener('vkplatformchange', function () {
+    syncUI();
+    syncFullscreenUI();
+  });
 
   if (el.rules) {
     el.rules.addEventListener('toggle', function () {
@@ -2763,7 +2962,6 @@ var Solver = (function () {
           startGameplayIfInteractive();
         }
       }
-      requestAnimationFrame(syncCustomScrollbar);
     });
   }
 
@@ -2774,8 +2972,13 @@ var Solver = (function () {
 
   if (Platform) {
     Platform.registerLifecycleHooks({
-      pause: function () { pauseRuntime('platform'); },
+      pause: function () {
+        pauseRuntime('platform');
+        drag.on = false;
+        if (el.app) el.app.inert = true;
+      },
       resume: function () {
+        if (el.app) el.app.inert = !startupReady;
         resumeRuntime('platform');
         startGameplayIfInteractive();
       }
@@ -2805,6 +3008,9 @@ var Solver = (function () {
       G.score = data.score || 0;
       var start = Math.min(Math.max(0, (data.unlocked || 1) - 1), LEVELS.length - 1);
       loadLevel(start, true, true);
+      startupReady = true;
+      if (el.app) el.app.inert = !!runtimePauseReasons.platform;
+      syncFullscreenUI();
       // К этому кадру облачный прогресс применён, интерфейс и canvas готовы.
       requestAnimationFrame(function () {
         if (Platform) {
@@ -2818,12 +3024,22 @@ var Solver = (function () {
       G.unlocked = data.unlocked || 1;
       G.score = data.score || 0;
       loadLevel(Math.min(G.unlocked - 1, LEVELS.length - 1), true, true);
+      startupReady = true;
+      if (el.app) el.app.inert = !!runtimePauseReasons.platform;
+      syncFullscreenUI();
       if (Platform) Platform.gameReady();
     });
   })();
 
 })();
 
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startGame, { once: true });
+} else {
+  startGame();
+}
+})();
 </script>
 </body>
 </html>

@@ -83,9 +83,7 @@
     tools: document.getElementById('toolSwitch'),
     toolBtns: document.querySelectorAll('#toolSwitch button'),
     rules: document.querySelector('.rules'),
-    app: document.querySelector('.app'),
-    scrollbar: document.getElementById('customScrollbar'),
-    scrollbarThumb: document.getElementById('customScrollbarThumb')
+    app: document.querySelector('.app')
   };
 
   // ------------------------------------------------------------- вспомогалки
@@ -235,27 +233,6 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ox = 0; oy = 0;
     draw();
-    syncCustomScrollbar();
-  }
-
-  function syncCustomScrollbar() {
-    if (!el.app || !el.scrollbar || !el.scrollbarThumb) return;
-    var maxScroll = Math.max(0, el.app.scrollHeight - el.app.clientHeight);
-    if (maxScroll <= 1) {
-      el.scrollbar.hidden = true;
-      return;
-    }
-
-    el.scrollbar.hidden = false;
-    var inset = 3;
-    var trackHeight = Math.max(1, el.scrollbar.clientHeight - inset * 2);
-    var thumbHeight = Math.max(44,
-      Math.round(trackHeight * el.app.clientHeight / el.app.scrollHeight));
-    thumbHeight = Math.min(trackHeight, thumbHeight);
-    var travel = Math.max(0, trackHeight - thumbHeight);
-    var top = inset + travel * el.app.scrollTop / maxScroll;
-    el.scrollbarThumb.style.height = thumbHeight + 'px';
-    el.scrollbarThumb.style.transform = 'translateY(' + Math.round(top) + 'px)';
   }
 
   function cx(c) { return ox + c * cs + cs / 2; }
@@ -954,6 +931,13 @@
     startGameplayIfInteractive();
   }
 
+  // Причину отказа показываем игроку: без неё «реклама не работает» неотличимо
+  // от «ролик закрыли раньше времени».
+  function adReason(error) {
+    var text = Platform && Platform.describeError ? Platform.describeError(error) : '';
+    return text ? ' (' + text + ')' : '';
+  }
+
   // Полноэкранную рекламу показываем только после победы и только по явному
   // переходу игрока к следующему уровню — то есть строго между уровнями.
   function goToNextLevel() {
@@ -977,6 +961,7 @@
     }
 
     var rewarded = false;
+    var failure = '';
     var launched = Platform.showRewardedAd({
       onRewarded: function () {
         rewarded = true;
@@ -985,13 +970,15 @@
         G.unlocked = Math.max(G.unlocked, levelIndex + 1);
         save(true);
       },
+      onError: function (error) { failure = adReason(error); },
       onClose: function () {
         if (rewarded) {
           loadLevel(levelIndex, true);
           say('Уровень ' + (levelIndex + 1) + ' открыт за просмотр видео.', 'good');
         } else {
           syncUI();
-          say('Чтобы открыть уровень, досмотри видео до награды.', 'warn');
+          say(failure ? 'Видео не показано' + failure + '. Попробуй ещё раз позже.'
+            : 'Чтобы открыть уровень, досмотри видео до награды.', 'warn');
         }
       }
     });
@@ -1386,7 +1373,6 @@
       el.len.textContent = '—';
       el.speed.textContent = '—';
     }
-    syncCustomScrollbar();
   }
 
   // inert блокирует ввод в новых браузерах, перехват — также в старых WebView.
@@ -1484,59 +1470,12 @@
     syncFullscreenUI();
     resize();
   });
-  window.addEventListener('load', syncCustomScrollbar);
-
-  var scrollbarDrag = null;
-  if (el.app && el.scrollbar && el.scrollbarThumb) {
-    el.app.addEventListener('scroll', syncCustomScrollbar, { passive: true });
-
-    el.scrollbar.addEventListener('pointerdown', function (event) {
-      event.preventDefault();
-      syncCustomScrollbar();
-      var trackRect = el.scrollbar.getBoundingClientRect();
-      var thumbHeight = el.scrollbarThumb.offsetHeight;
-      var inset = 3;
-      var travel = Math.max(1, trackRect.height - inset * 2 - thumbHeight);
-      var maxScroll = Math.max(0, el.app.scrollHeight - el.app.clientHeight);
-
-      if (event.target !== el.scrollbarThumb) {
-        var targetTop = event.clientY - trackRect.top - inset - thumbHeight / 2;
-        var share = Math.max(0, Math.min(1, targetTop / travel));
-        el.app.scrollTop = share * maxScroll;
-        syncCustomScrollbar();
-        return;
-      }
-
-      scrollbarDrag = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        startScroll: el.app.scrollTop,
-        maxScroll: maxScroll,
-        travel: travel
-      };
-      el.scrollbar.classList.add('dragging');
-      el.scrollbar.setPointerCapture(event.pointerId);
-    });
-
-    el.scrollbar.addEventListener('pointermove', function (event) {
-      if (!scrollbarDrag || event.pointerId !== scrollbarDrag.pointerId) return;
-      event.preventDefault();
-      var delta = event.clientY - scrollbarDrag.startY;
-      el.app.scrollTop = scrollbarDrag.startScroll +
-        delta * scrollbarDrag.maxScroll / scrollbarDrag.travel;
-    });
-
-    function endScrollbarDrag(event) {
-      if (!scrollbarDrag || event.pointerId !== scrollbarDrag.pointerId) return;
-      try { el.scrollbar.releasePointerCapture(event.pointerId); } catch (error) { }
-      scrollbarDrag = null;
-      el.scrollbar.classList.remove('dragging');
-      syncCustomScrollbar();
-    }
-
-    el.scrollbar.addEventListener('pointerup', endScrollbarDrag);
-    el.scrollbar.addEventListener('pointercancel', endScrollbarDrag);
-  }
+  // Медленный клиент подтверждает VKWebAppInit уже после старта: тогда кнопки
+  // «🎬» закрытых уровней надо включить задним числом.
+  window.addEventListener('vkplatformchange', function () {
+    syncUI();
+    syncFullscreenUI();
+  });
 
   if (el.rules) {
     el.rules.addEventListener('toggle', function () {
@@ -1550,7 +1489,6 @@
           startGameplayIfInteractive();
         }
       }
-      requestAnimationFrame(syncCustomScrollbar);
     });
   }
 
