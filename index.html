@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Змейка Гамильтона</title>
+<script defer src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Play:wght@400;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app" inert>
+
+  <header class="top">
+    <h1>Змейка&nbsp;Гамильтона</h1>
+    <div class="levels" id="levelStrip"></div>
+    <button id="btnFullscreen" class="ghost" aria-pressed="false" hidden>На весь экран</button>
+  </header>
+
+  <div class="stage">
+    <div class="hud">
+      <div class="hud-item"><span class="k">Уровень</span><span class="v" id="hudLevel">1</span></div>
+      <div class="hud-item"><span class="k">Лабиринт</span><span class="v" id="hudName">—</span></div>
+      <div class="hud-item"><span class="k">Рельсы</span><span class="v" id="hudCover">0 / 0</span></div>
+      <div class="hud-item"><span class="k">Длина</span><span class="v" id="hudLen">—</span></div>
+      <div class="hud-item"><span class="k">Очки</span><span class="v" id="hudScore">0</span></div>
+      <div class="hud-item"><span class="k">Темп</span><span class="v" id="hudSpeed">—</span></div>
+    </div>
+
+    <div class="lcd-wrap">
+      <canvas id="field"></canvas>
+      <div class="overlay" id="overlay" hidden>
+        <div class="overlay-box">
+          <div class="overlay-title" id="ovTitle"></div>
+          <div class="overlay-text" id="ovText"></div>
+          <div class="overlay-actions" id="ovActions"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+
+    <div class="toolbar">
+      <div class="tools" id="toolSwitch" role="group" aria-label="Инструмент рисования">
+        <span class="tools-label">Инструмент</span>
+        <button data-tool="line" class="on" aria-pressed="true">Отрезки</button>
+        <button data-tool="brush" aria-pressed="false">Кисть</button>
+        <span class="brush-hint" title="Кисть позволяет прокладывать рельсы через края поля-порталы">
+          ↔ для перемещений через порталы
+        </span>
+      </div>
+      <button id="btnRun" class="primary">Запустить змейку</button>
+      <button id="btnClose">Замкнуть петлю</button>
+      <button id="btnUndo">Отменить</button>
+      <button id="btnClear">Очистить</button>
+      <div class="tools solution-tools" id="solutionTools" role="group" aria-label="Показать решение">
+        <span class="tools-label">Показать решение</span>
+        <button data-solution-share="0.25">25%</button>
+        <button data-solution-share="0.5">50%</button>
+        <button data-solution-share="1">100%</button>
+      </div>
+      <button id="btnSkip" class="ghost" hidden>Промотать</button>
+      <button id="btnStop" class="ghost" hidden>Остановить</button>
+      <div class="playback" id="playbackControls" role="group" aria-label="Управление повтором" hidden>
+        <span class="playback-label">Повтор</span>
+        <button id="btnReplayStart" title="В начало">⏮ Начало</button>
+        <button id="btnReplayPrev" title="На один шаг назад">◀ Кадр</button>
+        <button id="btnReplayPlay" class="primary">▶ Снова</button>
+        <button id="btnReplayNext" title="На один шаг вперёд">Кадр ▶</button>
+        <button id="btnReplayEnd" title="В конец">Конец ⏭</button>
+        <input id="replaySeek" type="range" min="0" max="1" step="1" value="1"
+          aria-label="Позиция повтора">
+        <span class="playback-position" id="replayPosition">—</span>
+        <button id="btnReplayEdit" class="ghost">К рельсам</button>
+      </div>
+    </div>
+
+    <div class="status" id="status" role="status">Загружаем игру и сохранённый прогресс…</div>
+  </div>
+
+  <details class="rules">
+    <summary>Правила и управление</summary>
+    <div class="rules-body">
+      <p><b>Задача.</b> Змейкой управлять нельзя. Игрок заранее прокладывает ей <b>рельсы</b> —
+      замкнутый маршрут без самопересечений. Затем змейка бесконечно бежит по этому кольцу,
+      ест еду и растёт.</p>
+      <p><b>Победа.</b> Уровень пройден, если змейка выросла настолько, что закрыла собой всё
+      свободное поле. Это возможно, только если рельсы проходят <b>через каждую</b> свободную
+      клетку ровно один раз — то есть образуют гамильтонов цикл.</p>
+      <p><b>Провал.</b> Если рельсы покрывают не всё поле, рано или поздно еда появится там,
+      куда змейка не заезжает, — и рост остановится.</p>
+      <p><b>Края поля замкнуты.</b> Уехав за правый край, змейка выедет слева; за нижний — сверху.
+      Рельсы тоже можно вести «сквозь» край.</p>
+      <p><b>Отрезки</b> — основной инструмент. Клик ставит начало, следующий клик — конец
+      отрезка; дальше каждый клик продолжает рельсы от последней точки. Отрезок всегда
+      прямой: направление берётся по большей из двух разниц, а сама линия обрывается перед
+      стеной или уже проложенными рельсами. Пунктир под курсором показывает, что получится.</p>
+      <p><b>Кисть</b> — альтернативный инструмент: нажми и веди, рельсы тянутся за курсором.
+      Ведёшь назад по самому себе — стираешь.</p>
+      <p>Обоими инструментами: клик по клетке уже проложенного пути обрезает рельсы до неё,
+      а чтобы замкнуть кольцо, достаточно довести их до стартовой клетки.</p>
+      <p><b>Подсказка.</b> Кнопки 25% и 50% показывают только начало одного из правильных
+      решений — оставшуюся часть можно достроить самостоятельно. Кнопка 100% показывает
+      и замыкает весь цикл.</p>
+      <p><b>Повтор.</b> После забега можно свободно перематывать запись ползунком,
+      двигаться на кадр назад и вперёд, поставить показ на паузу или запустить его снова.</p>
+      <p><b>Клавиатура.</b> Стрелки — тянуть рельсы по клетке, <kbd>Backspace</kbd> —
+      отменить, <kbd>Tab</kbd> — сменить инструмент, <kbd>Enter</kbd> — замкнуть,
+      <kbd>Пробел</kbd> — запуск, <kbd>C</kbd> — очистить.</p>
+    </div>
+  </details>
+
+</div>
+
+<div class="custom-scrollbar" id="customScrollbar" aria-hidden="true" hidden>
+  <div class="custom-scrollbar-thumb" id="customScrollbarThumb"></div>
+</div>
+
+<script defer src="js/levels.js"></script>
+<script defer src="js/solver.js"></script>
+<script defer src="js/vk-games.js"></script>
+<script defer src="js/game.js"></script>
+</body>
+</html>
