@@ -19,6 +19,10 @@
   // рекламу за такое время игрок не успел бы.
   var AD_RETRY_WINDOW = 2500;
   var AD_FORMATS = ['interstitial', 'reward'];
+  // Ответ рекламной сети «нет подходящего ролика»: показывать нечего сейчас,
+  // а не сломано в игре.
+  var AD_NO_FILL = 20;
+  var AD_ERRORS = { 20: 'сейчас нет подходящей рекламы' };
   var bridge = null;
   var initPromise = null;
   var memoryData = null;
@@ -493,6 +497,9 @@
   function describeError(error) {
     if (!error) return '';
     var data = error.error_data || (error.error && error.error.error_data) || {};
+    if (Object.prototype.hasOwnProperty.call(AD_ERRORS, data.error_code)) {
+      return AD_ERRORS[data.error_code];
+    }
     var reason = data.error_reason;
     if (reason && typeof reason === 'object') reason = reason.error_msg || reason.error_message || '';
     var text = data.error_msg || data.error_description || reason || error.message ||
@@ -515,6 +522,12 @@
         warn('не удалось проверить рекламу «' + format + '».', error);
         return false;
       });
+  }
+
+  function isNoFill(error) {
+    var data = error && error.error_data;
+    if (!data) return false;
+    return Number(data.error_code) === AD_NO_FILL || /no ads/i.test(String(data.error_reason || ''));
   }
 
   function preloadAds() {
@@ -560,8 +573,9 @@
         clearTimeout(retryWindow);
         adReady[format] = false;
         // Повторяем только мгновенный отказ: иначе закрытый игроком ролик
-        // запустился бы во второй раз.
-        if (!instant || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
+        // запустился бы во второй раз. Отсутствие подходящего ролика повторять
+        // бессмысленно — за доли секунды сеть его не найдёт.
+        if (!instant || isNoFill(error) || (error && error.code === 'VK_ADAPTER_TIMEOUT')) throw error;
         warn('ролик «' + format + '» не был готов, просим клиент загрузить его.', error);
         return preloadAd(format).then(function () { return requestAd(format, false); });
       });

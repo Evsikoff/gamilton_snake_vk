@@ -474,6 +474,22 @@ test('an ad refused immediately is preloaded and retried exactly once', async ()
   assert(retryCheck >= 0, 'the retry must ask the client to load a clip first');
 });
 
+test('an empty ad network is reported in Russian and not asked twice', async () => {
+  let attempts = 0;
+  const h = browser({ send(method, params, host) {
+    if (method !== 'VKWebAppShowNativeAds') return host.defaultSend(method, params);
+    attempts++;
+    return Promise.reject({ error_type: 'client_error', error_data: { error_code: 20, error_reason: 'No ads' } });
+  } });
+  await h.api.init();
+  let failure = '', closes = 0;
+  h.api.showRewardedAd({ onError(error) { failure = h.api.describeError(error); }, onClose() { closes++; } });
+  await drain();
+  assert.equal(attempts, 1, 'the network has nothing to serve; a retry cannot change that');
+  assert.equal(closes, 1);
+  assert.equal(failure, 'сейчас нет подходящей рекламы');
+});
+
 test('an ad the player closes after watching is never restarted', async () => {
   const ad = deferred();
   let attempts = 0;
