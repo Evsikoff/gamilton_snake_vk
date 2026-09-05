@@ -30,6 +30,7 @@
   var cloudChain = Promise.resolve(false);
   var adInProgress = false;
   var adReady = { interstitial: false, reward: false };
+  var methodSupport = {};
   var pauseReasons = {};
   var muteReasons = {};
   var mutedMedia = [];
@@ -51,7 +52,17 @@
   function isObject(data) { return !!data && typeof data === 'object' && !Array.isArray(data); }
   function clone(data) { return JSON.parse(JSON.stringify(data)); }
   function hasData(data) { return isObject(data) && Object.keys(data).length > 0; }
-  function warn(message, error) { console.warn('VK: ' + message, error || ''); }
+  // Голый объект ошибки печатается как «Object» и ничего не говорит о причине,
+  // поэтому разбираем его текстом прямо в сообщении.
+  function warn(message, error) {
+    var reason = describeError(error);
+    var dump = '';
+    try { dump = error ? JSON.stringify(error.error_data || error) || '' : ''; }
+    catch (serialization) { dump = ''; }
+    if (dump === '{}' || dump === reason) dump = '';
+    console.warn('VK: ' + message + (reason ? ' — ' + reason : '') +
+      (dump ? ' ' + dump : ''), error || '');
+  }
   function callback(target, name, value) {
     try { if (typeof target[name] === 'function') target[name](value); }
     catch (error) { console.error('VK: ошибка обработчика ' + name, error); }
@@ -395,6 +406,7 @@
       send('VKWebAppSetViewSettings', { status_bar_style: 'light', action_bar_color: '#101522', navigation_bar_color: '#101522' })
         .catch(function (error) { warn('настройки панелей клиента недоступны.', error); });
     }
+    ['VKWebAppShowNativeAds', 'VKWebAppCheckNativeAds'].forEach(probeSupport);
     preloadAds();
     return syncCloud();
   }
@@ -449,12 +461,33 @@
       supportsMethod('VKWebAppShowNativeAds'));
   }
 
-  // Клиент может не заявлять о поддержке метода вовсе; отсутствие ответа
-  // трактуем как «поддерживает», отказ — как «нет».
+  // bridge.supports объявлен устаревшим, а bridge.supportsAsync отвечает
+  // промисом — значит, спрашиваем один раз и держим ответ в кэше: canShowAds
+  // вызывается на каждой перерисовке кнопок и должен оставаться синхронным.
   function supportsMethod(name) {
-    if (!bridge || typeof bridge.supports !== 'function') return !!bridge;
-    try { return bridge.supports(name) !== false; }
-    catch (error) { return true; }
+    return methodSupport[name] !== false;
+  }
+
+  function probeSupport(name) {
+    var pending;
+    try {
+      if (!bridge) pending = Promise.resolve(true);
+      else if (typeof bridge.supportsAsync === 'function') pending = bridge.supportsAsync(name);
+      else if (typeof bridge.supports === 'function') pending = bridge.supports(name);
+      else pending = true;
+    } catch (error) { pending = Promise.reject(error); }
+    return Promise.resolve(pending).then(function (value) {
+      return value !== false;
+    }, function () {
+      // Неизвестно — считаем, что метод есть: об отказе скажет сам вызов.
+      return true;
+    }).then(function (supported) {
+      var changed = supportsMethod(name) !== supported;
+      methodSupport[name] = supported;
+      if (!supported) warn('клиент не поддерживает ' + name + '.');
+      if (changed) emit('vkplatformchange', { sdkAvailable: environment.sdkAvailable });
+      return supported;
+    });
   }
 
   function describeError(error) {
@@ -486,6 +519,33 @@
 
   function preloadAds() {
     AD_FORMATS.forEach(function (format) { preloadAd(format); });
+  }
+
+  // Сводка для консоли живого клиента: почему именно реклама не идёт видно
+  // только там, а сообщение об ошибке от VK иначе теряется.
+  function diagnoseAds() {
+    var report = {
+      sdkAvailable: environment.sdkAvailable,
+      client: environment.client,
+      platform: environment.platform,
+      appId: environment.appId,
+      canShowAds: canShowAds(),
+      support: clone(methodSupport),
+      preloaded: clone(adReady),
+      checks: {}
+    };
+    if (!environment.sdkAvailable || !bridge) return Promise.resolve(report);
+    var chain = Promise.resolve();
+    AD_FORMATS.forEach(function (format) {
+      chain = chain.then(function () {
+        return send('VKWebAppCheckNativeAds', { ad_format: format, use_waterfall: true }, AD_CHECK_TIMEOUT)
+          .then(function (data) { report.checks[format] = { answered: true, response: data }; },
+            function (error) {
+              report.checks[format] = { answered: false, reason: describeError(error), error: error };
+            });
+      });
+    });
+    return chain.then(function () { return report; });
   }
 
   function requestAd(format, allowRetry) {
@@ -595,6 +655,7 @@
     canShowAds: canShowAds,
     preloadAds: preloadAds,
     adStatus: function () { return clone(adReady); },
+    diagnoseAds: diagnoseAds,
     describeError: describeError,
     requestFullscreen: function () { return setFullscreen(true); },
     exitFullscreen: function () { return setFullscreen(false); },
